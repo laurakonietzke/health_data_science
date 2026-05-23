@@ -15,7 +15,7 @@ library(janitor)
 # (Ordner mit allen .xpt-Dateien)
 # =========================================================
 
-setwd("C:/Users/jsche/Documents/Uni/Master (HS Aalen)/Semester 2/Health Data Science/health_data_science/data")
+setwd("C:/Users/jsche/Documents/Uni/Master (HS Aalen)/Semester 2/Health Data Science/health_data_science/data/Rohdaten")
 
 
 # =========================================================
