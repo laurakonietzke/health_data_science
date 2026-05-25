@@ -304,3 +304,4 @@ write.csv(nhanes, "nhanes_cleaned.csv", row.names = FALSE)
 # R-Datei (empfohlen)
 saveRDS(nhanes, "nhanes_cleaned.rds")
 
+glimpse(nhanes)
