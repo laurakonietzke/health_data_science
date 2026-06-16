@@ -2,4 +2,10 @@
 .Rhistory
 .RData
 .Ruserdata
+<<<<<<< HEAD
 .positai
+=======
+.httr-oauth
+.DS_Store
+.quarto
+>>>>>>> 55ebb729be6672b9482dadc28416c949e87a33f1
