@@ -8,4 +8,9 @@
 .httr-oauth
 .DS_Store
 .quarto
+<<<<<<< HEAD
 >>>>>>> 55ebb729be6672b9482dadc28416c949e87a33f1
+=======
+.positai
+docs/
+>>>>>>> cd5f6b8d46c23caedecbfd61d9a5566254d8d137
