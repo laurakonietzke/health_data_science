@@ -1,22 +1,10 @@
-# =============================================================================
-# 01_data_cleaning.R
-# NHANES (cycle "L") -> analysis-ready diabetes dataset
-#
-# Rewrite of the original Diabetes_Dataset_Cleaning.R. The original applied a
-# single missing-code rule (7/9/77/.../9999 -> NA) to EVERY column, which
-# deleted legitimate values (e.g. age 7/9/77, sleep 7h/9h). See
-# docs/data_quality_issue.md. This version handles missing codes PER VARIABLE.
-#
-# Run from the project root (it auto-detects its own location):
-#   Rscript 01_data_cleaning.R
-# =============================================================================
-
 suppressMessages({
   library(haven)
   library(dplyr)
 })
 
-# ---- Resolve project paths (script lives in the repo root) ------------------
+# Ordner in dem das Skript selbt liegt wird ermittelt, statt sich auf das Arbeitsverzeichnis zu verlassen. 
+# Dadurch findet das Skript die Unterordner data/Rohdaten und data/Datensatz zuverlässig, egal von wo aus man es startet.
 args     <- commandArgs(trailingOnly = FALSE)
 file_arg <- grep("^--file=", args, value = TRUE)
 root <- if (length(file_arg)) {
@@ -28,14 +16,16 @@ raw_dir <- file.path(root, "data", "Rohdaten")
 out_dir <- file.path(root, "data", "Datensatz")
 stopifnot(dir.exists(raw_dir))
 
-# ---- Helper: set specific sentinel codes to NA for given columns ------------
+# Definieren einer Hilfsfunktion für fehlende Werte
+# -> Ersetzt bestimmte Zahlencodes (z.B. 7, 9, 777, 9999) durch echtes NA, 
+# aber nur in den explizit übergebenen Spalten.
 na_codes <- function(df, cols, codes) {
   cols <- intersect(cols, names(df))
   df %>% mutate(across(all_of(cols), ~ replace(.x, .x %in% codes, NA)))
 }
 
 # =============================================================================
-# 1. Import raw NHANES modules
+# 1. Einlesen der Rohdaten (12 NHANES-Module) -> heruntergeladene xpt Dateien 
 # =============================================================================
 rx <- function(f) read_xpt(file.path(raw_dir, f))
 
@@ -53,7 +43,7 @@ bpq    <- rx("BPQ_L.xpt")
 mcq    <- rx("MCQ_L.xpt")
 
 # =============================================================================
-# 2. Select needed variables from each module
+# 2. Auswählen relevanter Variablen aus den einzelnen NHANES-Modulen
 # =============================================================================
 demo_sel   <- demo   %>% select(SEQN, RIDAGEYR, RIAGENDR, RIDRETH3, INDFMPIR,
                                 DMDEDUC2, WTMEC2YR, SDMVSTRA, SDMVPSU)
@@ -71,7 +61,7 @@ bpq_sel    <- bpq    %>% select(SEQN, BPQ020)
 mcq_sel    <- mcq    %>% select(SEQN, MCQ160E, MCQ160F)
 
 # =============================================================================
-# 3. Merge all modules on the respondent id (SEQN)
+# 3. Alle Module über SEQN zu einem einzigen Datensatz zusammenführen
 # =============================================================================
 nhanes <- demo_sel %>%
   left_join(diq_sel,    by = "SEQN") %>%
@@ -87,8 +77,7 @@ nhanes <- demo_sel %>%
   left_join(mcq_sel,    by = "SEQN")
 
 # =============================================================================
-# 4. PER-VARIABLE missing-code handling
-#    (NHANES "Refused"/"Don't know" codes are column specific)
+# 4. Korrektur der NHANES-Sondercodes zu NA
 # =============================================================================
 nhanes <- nhanes %>%
   # Yes/No & education items: 7 = Refused, 9 = Don't know
@@ -102,8 +91,9 @@ nhanes <- nhanes %>%
 # DR1TSUGR, LBDLDL, LBXTLG, LBDHDD) carry NO sentinel codes and are left as-is.
 
 # =============================================================================
-# 5. Standardise physical activity to "per week", then minutes/week
-#    PAD790U / PAD810U units: D = day, W = week, M = month, Y = year
+# 5. Standardisierung der körperlichen Aktivität von Anzahl Einheiten pro 
+#    Tag/Woche/Monat/Jahr auf Einheiten pro Woche und anschließend Umrechnung 
+#    auf Minuten pro Woche (Mulitplikation mit Minuten pro Einheit)
 # =============================================================================
 to_per_week <- function(q, u) {
   case_when(
@@ -124,7 +114,9 @@ nhanes <- nhanes %>%
   )
 
 # =============================================================================
-# 6. Recode outcome, factors, binaries, and derive smoking status
+# 6. Kodierung der Zielvariable und Kovariaten (Umsetzung der Rohcodes in 
+#    interpretierbare kategoriale Variablen und Definition der inhaltlichen
+#    Ausprägungen)
 # =============================================================================
 nhanes <- nhanes %>%
   mutate(
@@ -163,7 +155,9 @@ nhanes <- nhanes %>%
   )
 
 # =============================================================================
-# 7. Build the final analysis dataset (drop intermediates, rename, add id)
+# 7. Erstellen des finalen Datensatzes (Personen mit unbekanntem Diabetes-
+#    Status entfernen, Spalten verständlich umbenennen, neue aufsteigende
+#    ID vergeben)
 # =============================================================================
 final <- nhanes %>%
   filter(!is.na(diabetes)) %>%               # drop rows with unknown outcome
@@ -195,7 +189,8 @@ final <- nhanes %>%
   select(patient_id, everything())
 
 # =============================================================================
-# 8. Back up the old (corrupted) outputs, then save the new ones
+# 8. Backup des alten Bereinigungsversuchs erstellen und neuen Datensatz
+#    speichern
 # =============================================================================
 if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
 old <- c("nhanes_cleaned.csv", "nhanes_cleaned.rds", "nhanes_cleaned_variablen.csv")
@@ -212,7 +207,7 @@ saveRDS(nhanes,   file.path(out_dir, "nhanes_cleaned.rds"))
 write.csv(final,  file.path(out_dir, "nhanes_cleaned_variablen.csv"), row.names = FALSE)
 
 # =============================================================================
-# 9. Verification — confirm the corruption is fixed
+# 9. Verifizierung, das die Korrektur der Sondercodes richtig funktioniert hat
 # =============================================================================
 cat("\n================ VERIFICATION ================\n")
 cat("Final dataset:", nrow(final), "rows x", ncol(final), "cols\n")

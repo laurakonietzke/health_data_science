@@ -3,11 +3,13 @@ library(broom)
 library(pROC)
 library(ggplot2)
 
-# Read the corrected, regenerated dataset (see 01_data_cleaning.R)
+# Einlesen des Datensatzes
 path <- file.path("data", "Datensatz", "nhanes_cleaned_variablen.csv")
 raw  <- read.csv(path, stringsAsFactors = FALSE)
 
-# Analysis population: adults (age >= 18, legal adulthood in the EU)
+# Definition der Analysepopulation (Erwachsene ≥18 Jahre) und finale Aufbereitung der
+# Variablen für die statistische Analyse (Filterung und analysespezifische Faktor-Formatierung)
+# -> Ergebnisdatensatz = ad (analysis dataset)
 ad <- raw %>%
   filter(age >= 18) %>%
   mutate(
@@ -21,10 +23,14 @@ ad <- raw %>%
     stroke         = factor(stroke,        levels = c(0, 1), labels = c("No", "Yes"))
   )
 
+# Kleine Statistik mit Anzahl Erwachsene, Anzahl Diabetiker und Anteil in Prozent
 cat("Adults (age >= 18):", nrow(ad),
     "| Diabetes = Yes:", sum(ad$diabetes == "Yes"),
     sprintf("(%.1f%%)", 100 * mean(ad$diabetes == "Yes")))
 
+# Gruppierung der Variablen in nicht beeinflussbare Faktoren (nonmod), beeinflussbare
+# Lebensstilfaktoren (lifestyle), kontinuierliche Variablen (cont_vars) und
+# kategoriale Variablen (cat_vars)
 nonmod   <- c("age", "gender", "origin")                  # Block 1 (non-modifiable)
 lifestyle<- c("bmi", "smoking_status", "sleep_duration",
               "moderate_min_week", "sugar_intake")          # Block 2 (modifiable)
@@ -33,6 +39,9 @@ cont_vars <- c("age", "bmi", "sleep_duration", "sugar_intake",
                "calorie_intake", "alcohol_week", "moderate_min_week")
 cat_vars  <- c("gender", "origin", "education_level", "smoking_status", "hypertension")
 
+# Berechnung von Mittelwert und Standardabweichung für jede kontinuierliche Variable
+# getrennt nach: Diabetes = Nein und Diabetes = Ja
+# -> Ausgabe als Tabelle im Format "Variable | No: mean (sd) | Yes: mean (sd)"
 summ_cont <- function(v) {
   s <- ad %>% group_by(diabetes) %>%
     summarise(mean = mean(.data[[v]], na.rm = TRUE),
@@ -44,7 +53,9 @@ summ_cont <- function(v) {
 }
 do.call(rbind, lapply(cont_vars, summ_cont))
 
-# Categorical: % within diabetes group
+# Berechnung der Häufigkeiten und prozentualen Anteile für jede kategoriale Variable 
+# getrennt nach: Diabetes = Nein und Diabetes = Ja
+# -> Ausgabe als Tabelle im Format „Variable | level | No: n (%) | Yes: n (%)“ 
 cat_pct <- function(v) {
   t <- table(ad[[v]], ad$diabetes)
   p <- prop.table(t, margin = 2) * 100
@@ -53,7 +64,9 @@ cat_pct <- function(v) {
              Yes = sprintf("%d (%.1f%%)", t[, "Yes"], p[, "Yes"]),
              row.names = NULL)
 }
+# Zusammenführen der Einzeltabellen zu einer großen Übersicht
 do.call(rbind, lapply(cat_vars, cat_pct))
+
 
 ## T-Test je Variable: vergleicht den Mittelwert zwischen Diabetikern und Nicht-Diabetikern
 
