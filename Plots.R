@@ -3,6 +3,8 @@ library(ggplot2)
 library(pROC)
 library(scales)
 library(glmnet)
+library(broom)
+library(tidyr)
 
 # Farbpalette (konsistent durch alle Grafiken)
 farben <- c("No" = "#185FA5", "Yes" = "#D85A30")
@@ -56,9 +58,111 @@ pres_theme <- theme_minimal(base_size = 14) +
   )
 
 # ================================================================
+# Zusätzliche Tabellen/Modelle, die die späteren Grafiken benötigen
+# (siehe Abgabe Code/02_analysis.R für die Herleitung)
+# ================================================================
+
+cont_vars <- c("age", "bmi", "sleep_duration", "sugar_intake",
+               "calorie_intake", "alcohol_week", "moderate_min_week")
+cat_vars  <- c("gender", "origin", "education_level", "smoking_status", "hypertension")
+
+# t-Tests je kontinuierlicher Variable (für die t-Test-Grafik)
+ttest_row <- function(v) {
+  f  <- as.formula(paste(v, "~ diabetes"))
+  tt <- t.test(f, data = ad)
+  data.frame(variable = v,
+             mean_No  = round(tt$estimate[1], 2),
+             mean_Yes = round(tt$estimate[2], 2),
+             t        = round(tt$statistic, 2),
+             df       = round(tt$parameter, 0),
+             p_value  = signif(tt$p.value, 3),
+             row.names = NULL)
+}
+tt_tab <- do.call(rbind, lapply(cont_vars, ttest_row))
+tt_tab$signif <- ifelse(tt_tab$p_value < 0.05, "*", "")
+
+# Chi-Quadrat-Tests je kategorialer Variable (für die Chi-Quadrat-Grafik)
+chi_row <- function(v) {
+  tab <- table(ad[[v]], ad$diabetes)
+  ct  <- suppressWarnings(chisq.test(tab))
+  data.frame(variable = v,
+             X_squared = round(ct$statistic, 2),
+             df        = ct$parameter,
+             p_value   = signif(ct$p.value, 3),
+             row.names = NULL)
+}
+chi_tab <- do.call(rbind, lapply(cat_vars, chi_row))
+chi_tab$signif <- ifelse(chi_tab$p_value < 0.05, "*", "")
+
+# Odds Ratios mit 95%-CI (für den Forest Plot)
+or_tab <- tidy(m_full, exponentiate = TRUE, conf.int = TRUE) %>%
+  filter(term != "(Intercept)") %>%
+  transmute(term,
+            OR      = round(estimate, 3),
+            CI_low  = round(conf.low, 3),
+            CI_high = round(conf.high, 3),
+            p_value = signif(p.value, 3),
+            signif  = ifelse(p.value < 0.05, "*", ""))
+
+# Hierarchische Regression: Block 1 vs. Block 2 (für AIC/Pseudo-R²-Grafik)
+m2 <- m_full
+mcfadden <- function(m) 1 - as.numeric(logLik(m) / logLik(update(m, . ~ 1)))
+lrt <- anova(m1, m2, test = "LRT")
+
+# ROC (Block 2) + Konfusionsmatrix am Youden-optimalen Schwellenwert
+roc2 <- roc(md$diabetes, md$p2, levels = c("No", "Yes"), direction = "<", quiet = TRUE)
+
+conf_metrics <- function(prob, actual, thr) {
+  pred <- factor(ifelse(prob >= thr, "Yes", "No"), levels = c("No", "Yes"))
+  cm <- table(Predicted = pred, Actual = actual)
+  TP <- cm["Yes","Yes"]; TN <- cm["No","No"]
+  FP <- cm["Yes","No"];  FN <- cm["No","Yes"]
+  list(cm = cm, stats = c(
+    Threshold   = round(thr, 3),
+    Sensitivity = round(TP/(TP+FN), 3),
+    Specificity = round(TN/(TN+FP), 3),
+    Accuracy    = round((TP+TN)/sum(cm), 3),
+    Precision   = round(TP/(TP+FP), 3)))
+}
+thr_youden <- as.numeric(coords(roc2, "best", best.method = "youden",
+                                ret = "threshold", transpose = TRUE))
+r_yj <- conf_metrics(md$p2, md$diabetes, thr_youden)
+
+# LASSO-Regression (für Lambda-Plot und Koeffizientenplot)
+lasso_vars <- c("age", "gender", "origin",
+                "bmi", "smoking_status", "sleep_duration",
+                "moderate_min_week", "vigorous_min_week", "sugar_intake",
+                "calorie_intake", "alcohol_week",
+                "education_level", "hypertension", "income")
+lasso_fml <- as.formula(paste("diabetes ~", paste(lasso_vars, collapse = " + ")))
+md_lasso  <- ad[complete.cases(ad[, c("diabetes", lasso_vars)]), ]
+X <- model.matrix(lasso_fml, data = md_lasso)[, -1]
+y <- as.integer(md_lasso$diabetes == "Yes")
+set.seed(42)
+cv_lasso <- cv.glmnet(X, y, family = "binomial", alpha = 1, nfolds = 10)
+
+lasso_coef <- coef(cv_lasso, s = "lambda.1se")
+lasso_df <- data.frame(
+  term        = rownames(lasso_coef),
+  coefficient = round(as.numeric(lasso_coef), 4),
+  row.names   = NULL
+)
+lasso_df$selected <- lasso_df$coefficient != 0
+
+# Farb-/Theme-Helfer, die die weiter unten stehenden Grafiken erwarten
+col_no             <- unname(farben["No"])
+col_yes            <- unname(farben["Yes"])
+col_sig            <- col_yes
+col_nonsig         <- "grey70"
+theme_presentation <- function() pres_theme
+
+out_dir <- "Plots"
+if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE)
+
+# ================================================================
 # Diabetes-Prävalenz (Donut-Chart)
 # ================================================================
-ad %>%
+p_donut <- ad %>%
   count(diabetes) %>%
   mutate(
     pct   = n / sum(n),
@@ -84,10 +188,14 @@ ad %>%
     panel.grid = element_blank()
   )
 
+print(p_donut)
+ggsave(file.path(out_dir, "Diabetes Prävalenz.png"), p_donut,
+       width = 7, height = 7, dpi = 300, bg = "white")
+
 # ================================================================
 # Alters- und Geschlechts-Pyramide
 # ================================================================
-ad %>%
+p_pyramide <- ad %>%
   filter(!is.na(gender)) %>%
   mutate(age_group = cut(age,
                          breaks = c(17, 29, 39, 49, 59, 69, 79, Inf),
@@ -114,10 +222,14 @@ ad %>%
   pres_theme +
   theme(legend.position = "top")
 
+print(p_pyramide)
+ggsave(file.path(out_dir, "Alters_und_Geschlechtspyramide.png"), p_pyramide,
+       width = 8, height = 6, dpi = 300, bg = "white")
+
 # ================================================================
 # Altersverteilung nach Diabetes-Status
 # ================================================================
-ggplot(ad, aes(x = age, fill = diabetes, color = diabetes)) +
+p_age_density <- ggplot(ad, aes(x = age, fill = diabetes, color = diabetes)) +
   geom_density(alpha = 0.35, linewidth = 0.8) +
   scale_fill_manual(values  = farben, name = "Diabetes") +
   scale_color_manual(values = farben, name = "Diabetes") +
@@ -131,10 +243,14 @@ ggplot(ad, aes(x = age, fill = diabetes, color = diabetes)) +
   ) +
   pres_theme
 
+print(p_age_density)
+ggsave(file.path(out_dir, "Altersverteilung_nach_Diabetes Status.png"), p_age_density,
+       width = 8, height = 5.5, dpi = 300, bg = "white")
+
 # ================================================================
 # BMI-Vergleich nach Diabetes-Status (Boxplot + Jitter)
 # ================================================================
-ggplot(ad, aes(x = diabetes, y = bmi, fill = diabetes)) +
+p_bmi_box <- ggplot(ad, aes(x = diabetes, y = bmi, fill = diabetes)) +
   geom_boxplot(outlier.shape = NA, alpha = 0.6, width = 0.5, linewidth = 0.7) +
   geom_jitter(aes(color = diabetes), width = 0.15, alpha = 0.08, size = 0.8) +
   scale_fill_manual(values  = farben, guide = "none") +
@@ -148,6 +264,10 @@ ggplot(ad, aes(x = diabetes, y = bmi, fill = diabetes)) +
     caption  = "Quelle: NHANES Cycle L"
   ) +
   pres_theme
+
+print(p_bmi_box)
+ggsave(file.path(out_dir, "BMI_nach_Diabetes Status.png"), p_bmi_box,
+       width = 6.5, height = 6, dpi = 300, bg = "white")
 
 
 
