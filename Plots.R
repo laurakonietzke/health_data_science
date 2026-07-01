@@ -55,7 +55,6 @@ pres_theme <- theme_minimal(base_size = 14) +
     legend.position   = "top"
   )
 
-
 # ================================================================
 # Diabetes-Prävalenz (Donut-Chart)
 # ================================================================
@@ -84,7 +83,6 @@ ad %>%
     axis.title = element_blank(),
     panel.grid = element_blank()
   )
-
 
 # ================================================================
 # Alters- und Geschlechts-Pyramide
@@ -116,7 +114,6 @@ ad %>%
   pres_theme +
   theme(legend.position = "top")
 
-
 # ================================================================
 # Altersverteilung nach Diabetes-Status
 # ================================================================
@@ -133,7 +130,6 @@ ggplot(ad, aes(x = age, fill = diabetes, color = diabetes)) +
     caption  = "Quelle: NHANES Cycle L"
   ) +
   pres_theme
-
 
 # ================================================================
 # BMI-Vergleich nach Diabetes-Status (Boxplot + Jitter)
@@ -155,11 +151,151 @@ ggplot(ad, aes(x = diabetes, y = bmi, fill = diabetes)) +
 
 
 
+# =============================================================================
+# Grafik: Chi-Quadrat-Ergebnisse als Balkendiagramm 
+# =============================================================================
+chi_plot_df <- chi_tab %>%
+  mutate(
+    sig_label = ifelse(signif == "*", "signifikant (p < 0.05)", "nicht signifikant"),
+    p_label   = ifelse(p_value < 0.001,
+                       paste0("p = ", format(p_value, scientific = TRUE, digits = 2)),
+                       paste0("p = ", round(p_value, 3)))
+  )
 
+p_chi <- ggplot(chi_plot_df, aes(x = reorder(variable, X_squared), y = X_squared,
+                                 fill = sig_label)) +
+  geom_col(width = 0.6) +
+  geom_text(aes(label = p_label), hjust = -0.1, size = 3.8, fontface = "italic") +
+  coord_flip(clip = "off") +
+  scale_fill_manual(values = c("signifikant (p < 0.05)" = col_sig,
+                               "nicht signifikant"      = col_nonsig)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.3))) +
+  labs(
+    title    = "Chi-Quadrat-Test: Welche kategorialen Faktoren hängen mit Diabetes zusammen?",
+    subtitle = "Chi-Quadrat-Statistik je Variable (nur bei gleichen Freiheitsgraden direkt vergleichbar)",
+    x        = NULL, y = "Chi-Quadrat (X\u00b2)", fill = NULL
+  ) +
+  theme_presentation() +
+  theme(panel.grid.major.y = element_blank())
 
-#VANESSA PLATZHALTER
+print(p_chi)
+ggsave("plot_02_chiquadrat.png", p_chi, width = 9, height = 5.5, dpi = 300, bg = "white")
 
+# =============================================================================
+# Grafik: Odds Ratios als Forest Plot
+# =============================================================================
+or_plot_df <- or_tab %>%
+  mutate(
+    risk_type = ifelse(OR > 1, "Risikofaktor (OR > 1)", "Schutzfaktor (OR < 1)"),
+    term      = factor(term, levels = term[order(OR)])
+  )
 
+p_or <- ggplot(or_plot_df, aes(x = OR, y = term, color = risk_type)) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "grey50", linewidth = 0.6) +
+  geom_errorbarh(aes(xmin = CI_low, xmax = CI_high), height = 0.2, linewidth = 1) +
+  geom_point(size = 3.5) +
+  geom_text(aes(label = sprintf("%.2f", OR)), vjust = -1, size = 3.5, show.legend = FALSE) +
+  scale_color_manual(values = c("Risikofaktor (OR > 1)" = col_yes,
+                                "Schutzfaktor (OR < 1)" = col_no)) +
+  scale_x_log10() +
+  labs(
+    title    = "Logistische Regression: Welche Faktoren erhöhen oder senken das Diabetes-Risiko?",
+    subtitle = "Odds Ratios mit 95%-Konfidenzintervall \u2014 adjustiert für alle anderen Modellvariablen",
+    x        = "Odds Ratio (log-Skala)", y = NULL, color = NULL,
+    caption  = "Gestrichelte Linie = kein Effekt (OR = 1). Rechts davon = erhöhtes Risiko, links davon = schützend."
+  ) +
+  theme_presentation() +
+  theme(panel.grid.major.y = element_blank())
+
+print(p_or)
+ggsave("plot_03_odds_ratios.png", p_or, width = 9, height = 6.5, dpi = 300, bg = "white")
+
+# =============================================================================
+# Grafik: AIC & Pseudo-R² nebeneinander 
+# =============================================================================
+plot_comp <- data.frame(
+  model    = c("Block 1\n(Basis)", "Block 2\n(+ Lifestyle)"),
+  AIC      = c(AIC(m1), AIC(m2)),
+  pseudoR2 = c(mcfadden(m1), mcfadden(m2))
+) %>%
+  mutate(model = factor(model, levels = model))
+
+p_aic <- ggplot(plot_comp, aes(x = model, y = AIC, fill = model)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = round(AIC, 1)), vjust = -0.6, fontface = "bold", size = 4.5) +
+  scale_fill_manual(values = c(col_no, col_yes)) +
+  coord_cartesian(ylim = c(min(plot_comp$AIC) * 0.97, max(plot_comp$AIC) * 1.03)) +
+  labs(title = "AIC", subtitle = "Niedriger = besser", x = NULL, y = "AIC") +
+  theme_presentation() + theme(legend.position = "none")
+
+p_r2 <- ggplot(plot_comp, aes(x = model, y = pseudoR2, fill = model)) +
+  geom_col(width = 0.5) +
+  geom_text(aes(label = percent(pseudoR2, accuracy = 0.1)),
+            vjust = -0.6, fontface = "bold", size = 4.5) +
+  scale_fill_manual(values = c(col_no, col_yes)) +
+  scale_y_continuous(labels = percent_format(), expand = expansion(mult = c(0, 0.15))) +
+  labs(title = "Pseudo-R\u00b2 (McFadden)", subtitle = "Höher = besser", x = NULL, y = "Pseudo-R\u00b2") +
+  theme_presentation() + theme(legend.position = "none")
+
+if (!requireNamespace("patchwork", quietly = TRUE)) install.packages("patchwork")
+library(patchwork)
+
+p_value_lrt <- signif(lrt$`Pr(>Chi)`[2], 3)
+p_hierarch <- (p_aic + p_r2) +
+  plot_annotation(
+    title    = "Hierarchische Regression: Bringt der Lifestyle-Block einen Mehrwert?",
+    subtitle = sprintf("Likelihood-Ratio-Test: Chi\u00b2 = %.1f, df = %d, p = %s",
+                       lrt$Deviance[2], lrt$Df[2], format(p_value_lrt, scientific = TRUE)),
+    theme    = theme(plot.title    = element_text(face = "bold", size = 18),
+                     plot.subtitle = element_text(color = "grey40", size = 11))
+  )
+
+print(p_hierarch)
+ggsave("plot_04_hierarchische_regression.png", p_hierarch,
+       width = 10, height = 5.5, dpi = 300, bg = "white")
+
+# =============================================================================
+# Grafik: t-Test-Ergebnisse als facettierte Balkendiagramme 
+# =============================================================================
+tt_long <- tt_tab %>%
+  mutate(
+    sig_label = ifelse(signif == "*", "(*)", "(n.s.)"),
+    facet_lab = paste(variable, sig_label)
+  ) %>%
+  select(variable, facet_lab, mean_No, mean_Yes) %>%
+  pivot_longer(cols = c(mean_No, mean_Yes),
+               names_to  = "Gruppe",
+               values_to = "Mittelwert") %>%
+  mutate(Gruppe = recode(Gruppe, mean_No = "No", mean_Yes = "Yes"),
+         Gruppe = factor(Gruppe, levels = c("No", "Yes")))
+
+# Reihenfolge der Panels wie im Originalvektor cont_vars beibehalten
+tt_long$facet_lab <- factor(
+  tt_long$facet_lab,
+  levels = unique(tt_long$facet_lab[match(cont_vars, tt_long$variable)])
+)
+
+p_ttest <- ggplot(tt_long, aes(x = Gruppe, y = Mittelwert, fill = Gruppe)) +
+  geom_col(width = 0.65) +
+  geom_text(aes(label = Mittelwert),
+            vjust = -0.5, fontface = "bold", size = 4) +
+  facet_wrap(~ facet_lab, scales = "free_y", ncol = 4) +
+  scale_fill_manual(values = c("No" = col_no, "Yes" = col_yes)) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+  labs(
+    title    = "Vergleich der Mittelwerte: No vs. Yes",
+    subtitle = "(*) = statistisch signifikanter Unterschied (p < 0.05), n.s. = nicht signifikant",
+    x        = NULL, y = "Mittelwert", fill = "Gruppe"
+  ) +
+  theme_presentation() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    strip.text          = element_text(face = "bold", size = 11),
+    strip.background    = element_rect(fill = "grey95", color = NA)
+  )
+
+print(p_ttest)
+ggsave("plot_01_ttest.png", p_ttest, width = 12, height = 7, dpi = 300, bg = "white")
 
 
 
